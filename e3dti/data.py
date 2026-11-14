@@ -1,0 +1,197 @@
+"""Dataset loading, graph construction, and split audits for E3DTI."""
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+from rdkit import Chem
+from sklearn.model_selection import train_test_split
+
+from .model import ATOM_VOCAB, N_BOND, SEP_BINS, collate_graphs
+
+
+ELEMENTS = ["C", "N", "O", "S", "F", "Cl", "Br", "I", "P", "B", "Si", "Se"]
+HYBRIDIZATIONS = [
+    Chem.HybridizationType.SP,
+    Chem.HybridizationType.SP2,
+    Chem.HybridizationType.SP3,
+    Chem.HybridizationType.SP3D,
+    Chem.HybridizationType.SP3D2,
+]
+BONDS = {
+    Chem.BondType.SINGLE: 1,
+    Chem.BondType.DOUBLE: 2,
+    Chem.BondType.TRIPLE: 3,
+    Chem.BondType.AROMATIC: 4,
+}
+AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+K_NEIGHBORS = 16
+
+
+def stable_id(text: str) -> str:
+    return hashlib.md5(text.encode()).hexdigest()[:16]
+
+
+def load_drug_conformers(path):
+    with gzip.open(path) as handle:
+        return {
+            molecule.GetProp("_Name"): molecule
+            for molecule in Chem.ForwardSDMolSupplier(handle, removeHs=True)
+            if molecule is not None
+        }
+
+
+def load_protein_structures(path):
+    arrays = np.load(path)
+    aa = arrays["aa"]
+    xyz = arrays["ca_xyz"]
+    plddt = arrays["plddt"]
+    offsets = arrays["offset"]
+    return {
+        protein_id: ("".join(aa[start:end]), xyz[start:end], plddt[start:end])
+        for protein_id, start, end in zip(
+            arrays["pid"], offsets[:-1], offsets[1:]
+        )
+    }
+
+
+def drug_graph(molecule):
+    position = torch.tensor(
+        molecule.GetConformer().GetPositions(), dtype=torch.float32
+    )
+    features = [
+        [
+            ELEMENTS.index(atom.GetSymbol())
+            if atom.GetSymbol() in ELEMENTS
+            else len(ELEMENTS),
+            min(atom.GetDegree(), 6),
+            min(max(atom.GetFormalCharge(), -2), 2) + 2,
+            int(atom.GetIsAromatic()),
+            HYBRIDIZATIONS.index(atom.GetHybridization())
+            if atom.GetHybridization() in HYBRIDIZATIONS
+            else len(HYBRIDIZATIONS),
+            min(atom.GetTotalNumHs(), 4),
+            int(atom.IsInRing()),
+        ]
+        for atom in molecule.GetAtoms()
+    ]
+    n_atoms = len(features)
+    bond = torch.zeros(n_atoms, n_atoms, dtype=torch.long)
+    for item in molecule.GetBonds():
+        src = item.GetBeginAtomIdx()
+        dst = item.GetEndAtomIdx()
+        bond_type = BONDS.get(item.GetBondType(), 1)
+        bond[src, dst] = bond[dst, src] = bond_type
+    src, dst = (~torch.eye(n_atoms, dtype=torch.bool)).nonzero(as_tuple=True)
+    return {
+        "pos": position - position.mean(0),
+        "feat": torch.tensor(features, dtype=torch.long),
+        "edge": torch.stack([src, dst]),
+        "eattr": bond[src, dst],
+    }
+
+
+def protein_graph(sequence, xyz, plddt, geometry_neighbors=True):
+    position = torch.tensor(xyz, dtype=torch.float32)
+    position = position - position.mean(0)
+    n_nodes = len(position)
+    neighbors = min(K_NEIGHBORS, n_nodes - 1)
+    if geometry_neighbors:
+        pairwise = torch.cdist(position, position)
+    else:
+        sequence_index = torch.arange(n_nodes)
+        pairwise = (sequence_index[:, None] - sequence_index[None, :]).abs().float()
+    nearest = pairwise.topk(neighbors + 1, largest=False).indices[:, 1:]
+    dst = torch.arange(n_nodes).repeat_interleave(neighbors)
+    src = nearest.reshape(-1)
+    separation = torch.bucketize(
+        (src - dst).abs(), torch.tensor(SEP_BINS)
+    )
+    features = torch.tensor(
+        [AMINO_ACIDS.index(aa) if aa in AMINO_ACIDS else 20 for aa in sequence]
+    )
+    return {
+        "pos": position,
+        "feat": features,
+        "plddt": torch.tensor(plddt, dtype=torch.float32) / 100,
+        "edge": torch.stack([src, dst]),
+        "eattr": separation,
+    }
+
+
+def read_splits(data_root, dataset, split, seed):
+    directory = Path(data_root) / "main" / dataset / split
+    if split == "cluster":
+        source = pd.read_csv(directory / "source_train.csv")
+        train, validation = train_test_split(
+            source,
+            test_size=0.1,
+            random_state=seed,
+            stratify=source["Y"],
+        )
+        frames = {
+            "train": train.reset_index(drop=True),
+            "val": validation.reset_index(drop=True),
+            "test": pd.read_csv(directory / "target_test.csv"),
+        }
+    else:
+        frames = {
+            name: pd.read_csv(directory / f"{name}.csv")
+            for name in ("train", "val", "test")
+        }
+    return frames
+
+
+def pair_set(frame):
+    return set(zip(frame["SMILES"], frame["Protein"]))
+
+
+def audit_splits(frames):
+    pairs = {name: pair_set(frame) for name, frame in frames.items()}
+    return {
+        "within_train_duplicates": int(
+            frames["train"].duplicated(["SMILES", "Protein"]).sum()
+        ),
+        "train_val_overlap": len(pairs["train"] & pairs["val"]),
+        "train_test_overlap": len(pairs["train"] & pairs["test"]),
+        "val_test_overlap": len(pairs["val"] & pairs["test"]),
+    }
+
+
+class PairDataset(torch.utils.data.Dataset):
+    """Pair lookup for notebook-safe workers=0 loading.
+
+    Large graph dictionaries are intentionally shared by reference in the main
+    process. On spawn-based systems, use workers=0 to avoid copying them.
+    """
+
+    def __init__(self, frame, drug_graphs, protein_graphs):
+        self.drug_ids = frame["did"].tolist()
+        self.protein_ids = frame["pid"].tolist()
+        self.labels = frame["Y"].astype(np.float32).tolist()
+        self.drug_graphs = drug_graphs
+        self.protein_graphs = protein_graphs
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, index):
+        return (
+            self.drug_graphs[self.drug_ids[index]],
+            self.protein_graphs[self.protein_ids[index]],
+            self.labels[index],
+        )
+
+
+def collate_pairs(batch):
+    drugs, proteins, labels = zip(*batch)
+    return (
+        collate_graphs(drugs),
+        collate_graphs(proteins),
+        torch.tensor(labels),
+    )
