@@ -71,6 +71,23 @@ it, and changing it mid-run changes the learning rate for the remaining epochs.
 (`/kaggle/working` on Kaggle, a mounted Drive folder on Colab). The default
 `runs/` lives in the container and disappears with it.
 
+To work through a whole matrix unattended inside session limits:
+
+```bash
+python scripts/run_kaggle_matrix.py \
+  --output-root /kaggle/working/runs --budget-hours 10.5
+```
+
+It launches one run at a time with `--resume`, skips runs that already have a
+`results.json`, keeps going past a failed run rather than losing the session to
+it, and stops launching new runs before the platform's kill timer so the
+session ends on a finished run. Re-run the same command in a new session until
+the matrix is complete. `--dry-run` prints the plan and what is already done.
+
+The matrix it runs is the reduced one, not the 72-run matrix in
+`docs/experiment_protocol.md`. At a measured ~4.6 minutes per epoch on a T4,
+72 runs is roughly 277 GPU-hours — about nine weeks of a 30-hour weekly quota.
+
 ## 7: multiple seeds
 
 After the smoke run succeeds, run at least three seeds with the full model:
