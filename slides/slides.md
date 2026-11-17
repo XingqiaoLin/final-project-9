@@ -83,21 +83,43 @@ Capacity-matched 2D baseline, 10 epochs, seed 1.
 
 ---
 
-## What we built
+## Encoders: from sequence and graph to geometry
 
-Two E(3)-equivariant encoders feeding DrugBAN's attention, unchanged:
+Same bilinear attention and decoder in both. **Only the encoders differ** —
+which is what makes the comparison mean anything.
 
-- **Drug branch** — RDKit ETKDGv3 + MMFF94 conformers, fully connected graph
-- **Protein branch** — AlphaFold 3 Cα traces, k-NN graph (K=16), RBF distances
-- **Fusion** — DrugBAN's `BANLayer` / `FCNet` / `MLPDecoder`, reused as-is
+| | **DrugBAN** (2D) | **E3DTI** (3D) |
+|---|---|---|
+| **Protein** | amino-acid sequence → embedding → 1D CNN | residue graph from AlphaFold 3 → EGNN |
+| | *ordering only — no distance, no shape* | node `xᵢ` = Cα coordinate, `hᵢ` = residue type ⊕ pLDDT, edges = spatial neighbours |
+| **Drug** | 2D molecular graph, atoms + bonds → GCN | RDKit conformer, 3D coordinates → EGNN |
+| | *topology only — no conformation* | node `xᵢ` = atom position, `hᵢ` = atom features |
 
-Messages depend only on pairwise **distances**, so the model is invariant to
+<!-- 45 seconds. The two italic lines are the point: what the 2D model cannot
+     see. Everything downstream of the encoders is identical. -->
+
+---
+
+## Data pipeline
+
+```text
+DrugBAN splits ──┐
+                 ├─→ audit (leakage, duplicates, seed stability)
+AlphaFold 3 Cα ──┤
+RDKit ETKDGv3 ───┘        ↓
+                   drug graph + protein k-NN graph (K=16, RBF distances)
+                          ↓
+                   EGNN / GCN encoders → masked bilinear attention → MLP
+                          ↓
+                   validation picks checkpoint *and* threshold → test once
+```
+
+Messages use only pairwise **distances**, so the model is invariant to
 rotation and translation by construction.
 
-<span class="source">Invariance is asserted in tests, not assumed: `tests/test_model_correctness.py`.</span>
+<span class="source">Invariance and padding-independence are asserted in tests, not assumed: `tests/test_model_correctness.py`.</span>
 
-<!-- 45 seconds. Resist explaining EGNN message passing; the test is the point,
-     not the equations. -->
+<!-- Worth 20 seconds: test is touched exactly once, after model selection. -->
 
 ---
 
