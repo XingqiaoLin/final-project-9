@@ -67,7 +67,7 @@ On the standard split, a model can score well by remembering.
 ## What that costs: the out-of-domain collapse
 
 BioSNAP **cluster** split — unseen drugs *and* unseen proteins.
-Capacity-matched 2D baseline, 10 epochs, seed 1, best epoch 8.
+Capacity-matched 2D baseline, 10 epochs, seed 1.
 
 | | AUROC | AUPRC |
 |---|---|---|
@@ -78,9 +78,8 @@ Capacity-matched 2D baseline, 10 epochs, seed 1, best epoch 8.
 
 <span class="source">Threshold 0.456 selected on validation · accuracy 0.623 · specificity 0.897 · F1 0.483</span>
 
-<!-- This is the result. Pause here. Same numbers reproduced exactly after a
-     session loss forced a rerun, which is itself a check on the seed
-     discipline. -->
+<!-- Pause here. Same numbers reproduced exactly after a lost session forced a
+     rerun, which is itself a check on the seed discipline. -->
 
 ---
 
@@ -161,39 +160,73 @@ with published DrugBAN numbers.
 
 ---
 
-## Where we are, honestly
+## The answer, and it is not the one we expected
 
-**Measured**
+BioSNAP cluster, 10 epochs, seed 1. Matched capacity, matched budget.
 
-- cluster, 2D matched baseline: **test AUROC 0.659** (validation 0.887)
-- cluster, E3DTI, same 10-epoch budget: reached epoch 6,
-  validation 0.708 → **0.836**, still climbing
-- in-domain E3DTI: **validation** AUROC **0.9221** at epoch 37
+| Arm | val AUROC | **test AUROC** | test AUPRC |
+|---|---|---|---|
+| DrugBAN matched (2D) | 0.8866 | 0.6590 | 0.6773 |
+| E3DTI full (3D) | 0.8491 | **0.7085** | 0.7259 |
+| **E3DTI, coordinates shuffled** | 0.8494 | **0.7267** | 0.7432 |
 
-**Limits we are not hiding**
+1. The 3D-aware model **beats** the 2D baseline out-of-domain, by ~0.05 AUROC
+2. Destroying the geometry **does not hurt it**
 
-- one seed, one dataset, a 10-epoch budget — a 50-epoch run costs 3.9 GPU-hours
-  and the full matrix is ~277
-- the E3DTI cluster arm had not converged when the budget ran out
-- the `human/cold` contamination comparison is underpowered at n=304
-
-<!-- Claim the collapse as the result. Claim E3DTI vs baseline as in progress:
-     at epoch 6 it is below the baseline but has not converged, and that is a
-     budget limitation, not a finding. Do not overclaim. -->
+<!-- The whole talk lands here. Say both lines, in this order, slowly. -->
 
 ---
 
-## What would change our mind
+## What that means
 
-We will conclude 3D helps **only** if, on the held-out splits:
+<div class="definition">
+
+**3D-aware architecture helped. Predicted 3D coordinates did not.**
+
+</div>
+
+- Without the shuffle control we would have reported "3D structure helps,
+  +0.05 AUROC" — a clean claim with **the wrong mechanism**
+- The gain must come from elsewhere: message-passing scheme, protein contact
+  graph, atom featurisation
+- Note the inversion: 2D wins on validation, loses on test. Invisible on the
+  random split, where 97.4% of pairs are recognition
+
+<!-- This is the contribution: a control fired and stopped a misattribution. -->
+
+---
+
+## Limits we are not hiding
+
+- **One seed, 10 epochs, one dataset.** The 0.018 gap between full and
+  shuffled is almost certainly noise — the claim is that shuffling does *not
+  hurt*, not that it helps
+- **Protein contact topology survives the shuffle.** k-NN edges are built once
+  from true coordinates and not rebuilt, so for the protein branch the precise
+  statement is "continuous geometry *beyond contacts* contributes nothing".
+  The drug graph is fully connected, so the drug side is a clean test
+- A 50-epoch run costs 3.9 GPU-hours; the full matrix is ~277
+- The `human/cold` contamination comparison is underpowered at n=304
+
+<!-- Say the first bullet before anyone asks. It is the obvious objection. -->
+
+---
+
+## What we committed to in advance
+
+We said we would conclude 3D helps **only** if, on held-out splits:
 
 1. `full` beats `shuffled_coords` by more than the seed spread, **and**
 2. `full` beats the capacity-matched baseline
 
-Anything less and the honest answer is that predicted structure did not help
-here — and that is worth reporting.
+**Condition 2 passed. Condition 1 failed.** So we report what we found, not
+what we hoped for.
 
-<!-- Close on this. 20 seconds, then questions. -->
+Next: more seeds to put error bars on that 0.018, and rebuilding the protein
+graph from shuffled coordinates to close the topology loophole.
+
+<!-- Close on this. 20 seconds, then questions. Setting the bar before seeing
+     the numbers is what makes the negative half credible. -->
 
 ---
 
