@@ -131,6 +131,43 @@ python scripts/run_experiment_matrix.py \
   --all-ablations
 ```
 
+### Chirality: a limitation of the drug branch, and the fix
+
+E(3) includes **reflections**. The drug encoder builds its messages from
+interatomic distances, and a reflection preserves every distance, so the branch
+cannot distinguish a molecule from its mirror image. This is a property of the
+architecture, asserted in `tests/test_chirality.py` rather than assumed — the
+embeddings of a molecule and its reflection are not merely close, they are
+identical to the last bit.
+
+It is not a corner case. Drugs with at least one defined stereocentre:
+
+| Split | Drugs | With stereocentre |
+|---|---|---|
+| BioSNAP random | 4,504 | **47.7%** |
+| BioSNAP cluster | 3,213 | 45.9% |
+| BindingDB random | 14,643 | 45.1% |
+| BindingDB cluster | 8,969 | 45.9% |
+| Human random | 2,710 | 44.2% |
+| Human cold | 1,802 | 43.6% |
+
+Enantiomers routinely differ in activity, so for nearly half the drugs the
+model is missing information that matters.
+
+```bash
+python train_e3dti.py --dataset biosnap --split random --seed 1 --drug-chirality
+```
+
+The fix adds the tetrahedral chirality tag as an eighth atom feature, read from
+the **molecular graph** rather than the coordinates — the geometry cannot carry
+it, since that is exactly what reflection destroys. Rotation and translation
+invariance are unaffected, which is also asserted.
+
+The column is emitted always but read only when the flag is set, so every
+result produced before it existed remains bit-for-bit reproducible. Chiral runs
+go to a `<ablation>_chiral` directory, and the flag applies to the 2D baseline
+too, so the comparison stays fair.
+
 ### The capacity-matched control
 
 The four variants above remove an input pathway, so a drop in score can be

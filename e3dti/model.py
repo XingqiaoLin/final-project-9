@@ -9,6 +9,13 @@ from torch.nn.utils.weight_norm import weight_norm
 
 
 ATOM_VOCAB = [13, 7, 5, 2, 6, 5, 2]
+# Tetrahedral chirality tag, appended by drug_graph as an eighth atom column:
+# unspecified, clockwise, counter-clockwise, other.
+#
+# It sits outside ATOM_VOCAB on purpose. Both drug encoders iterate over
+# ATOM_VOCAB, so the extra column is inert unless a model asks for it, and
+# every run made before this existed stays bit-for-bit reproducible.
+CHIRALITY_VOCAB = 4
 N_BOND = 5
 SEP_BINS = [1, 2, 3, 4, 8, 16, 32]
 
@@ -108,17 +115,35 @@ def shuffle_positions_within_graphs(pos, batch):
 
 
 class DrugEncoder(nn.Module):
+    """E(3)-equivariant drug encoder.
+
+    Messages depend only on interatomic distances, which are preserved by
+    reflection as well as rotation. The branch is therefore blind to chirality
+    by construction: a molecule and its mirror image produce identical
+    embeddings. Roughly 45% of the drugs in every benchmark split here carry a
+    defined stereocentre, so that blindness is not a corner case.
+
+    `use_chirality` adds the tetrahedral tag as a learned embedding. The tag
+    comes from the molecular graph, not the coordinates, so it distinguishes
+    enantiomers without disturbing invariance to rotation or translation.
+    """
+
     def __init__(
         self,
         dim: int,
         n_layers: int,
         use_geometry: bool = True,
         shuffle_coords: bool = False,
+        use_chirality: bool = False,
     ):
         super().__init__()
         self.use_geometry = use_geometry
         self.shuffle_coords = shuffle_coords
+        self.use_chirality = use_chirality
         self.embeddings = nn.ModuleList([nn.Embedding(v, dim) for v in ATOM_VOCAB])
+        self.chirality = (
+            nn.Embedding(CHIRALITY_VOCAB, dim) if use_chirality else None
+        )
         self.bond = nn.Embedding(N_BOND, 16)
         self.egnn = EGNN(dim, 16, n_layers)
 
@@ -127,6 +152,8 @@ class DrugEncoder(nn.Module):
             embedding(graph["feat"][:, i])
             for i, embedding in enumerate(self.embeddings)
         )
+        if self.chirality is not None:
+            h = h + self.chirality(graph["feat"][:, len(ATOM_VOCAB)])
         pos = graph["pos"]
         if self.shuffle_coords:
             pos = shuffle_positions_within_graphs(pos, graph["batch"])
@@ -184,9 +211,12 @@ class DrugBANDrugEncoder(nn.Module):
     byte-identical inputs.
     """
 
-    def __init__(self, dim: int, n_layers: int = 3):
+    def __init__(self, dim: int, n_layers: int = 3, use_chirality: bool = False):
         super().__init__()
         self.embeddings = nn.ModuleList([nn.Embedding(v, dim) for v in ATOM_VOCAB])
+        self.chirality = (
+            nn.Embedding(CHIRALITY_VOCAB, dim) if use_chirality else None
+        )
         self.layers = nn.ModuleList(
             [nn.Linear(dim, dim) for _ in range(n_layers)]
         )
@@ -197,6 +227,8 @@ class DrugBANDrugEncoder(nn.Module):
             embedding(graph["feat"][:, i])
             for i, embedding in enumerate(self.embeddings)
         )
+        if self.chirality is not None:
+            h = h + self.chirality(graph["feat"][:, len(ATOM_VOCAB)])
         src, dst = graph["edge"]
         bonded = graph["eattr"] > 0
         src, dst = src[bonded], dst[bonded]
@@ -400,6 +432,7 @@ class E3DTI(nn.Module):
         ban_dim=256,
         heads=2,
         ablation="full",
+        drug_chirality=False,
     ):
         super().__init__()
         if ablation not in self.ABLATIONS:
@@ -410,7 +443,9 @@ class E3DTI(nn.Module):
             shuffle_drug,
             shuffle_protein,
         ) = self.ABLATIONS[ablation]
-        self.drug = DrugEncoder(dim, drug_layers, drug_geometry, shuffle_drug)
+        self.drug = DrugEncoder(
+            dim, drug_layers, drug_geometry, shuffle_drug, drug_chirality
+        )
         self.protein = ProteinEncoder(
             dim, protein_layers, protein_geometry, shuffle_protein
         )
@@ -460,9 +495,11 @@ class DrugBAN2D(nn.Module):
     explained by it simply being the bigger model.
     """
 
-    def __init__(self, dim=128, drug_layers=3, ban_dim=256, heads=2):
+    def __init__(
+        self, dim=128, drug_layers=3, ban_dim=256, heads=2, drug_chirality=False
+    ):
         super().__init__()
-        self.drug = DrugBANDrugEncoder(dim, drug_layers)
+        self.drug = DrugBANDrugEncoder(dim, drug_layers, drug_chirality)
         self.protein = DrugBANProteinEncoder(dim)
         self.bcn = weight_norm(
             MaskedBANLayer(dim, dim, ban_dim, heads), name="h_mat", dim=None

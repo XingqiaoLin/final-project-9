@@ -65,6 +65,14 @@ def parse_args():
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--ablation", choices=sorted(E3DTI.ABLATIONS), default="full")
     parser.add_argument(
+        "--drug-chirality",
+        action="store_true",
+        help="give the drug branch the tetrahedral chirality tag. The "
+        "encoders see only interatomic distances, which reflection preserves, "
+        "so without this the branch cannot distinguish a molecule from its "
+        "mirror image -- and ~45%% of benchmark drugs have a stereocentre.",
+    )
+    parser.add_argument(
         "--arch",
         choices=ARCHITECTURES,
         default="e3dti",
@@ -135,6 +143,7 @@ def build_model(args):
             drug_layers=args.drug_layers,
             protein_layers=args.protein_layers,
             ablation=args.ablation,
+            drug_chirality=args.drug_chirality,
         )
     if args.ablation != "full":
         raise ValueError(
@@ -142,7 +151,7 @@ def build_model(args):
             f"nothing for --arch {args.arch}, which has no geometry"
         )
     dim = MATCHED_BASELINE_DIM if args.arch == "drugban_matched" else args.dim
-    return DrugBAN2D(dim=dim)
+    return DrugBAN2D(dim=dim, drug_chirality=args.drug_chirality)
 
 
 def capture_rng_state():
@@ -307,7 +316,10 @@ def main():
     output = (
         Path(args.output_root)
         / f"{args.dataset}_{args.split}{'_cleaned' if args.clean_splits else ''}"
-        / (args.ablation if args.arch == "e3dti" else args.arch)
+        / (
+            (args.ablation if args.arch == "e3dti" else args.arch)
+            + ("_chiral" if args.drug_chirality else "")
+        )
         / f"seed_{args.seed}"
     )
     output.mkdir(parents=True, exist_ok=True)

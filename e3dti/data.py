@@ -12,7 +12,7 @@ import torch
 from rdkit import Chem
 from sklearn.model_selection import train_test_split
 
-from .model import ATOM_VOCAB, N_BOND, SEP_BINS, collate_graphs
+from .model import ATOM_VOCAB, CHIRALITY_VOCAB, N_BOND, SEP_BINS, collate_graphs
 
 
 ELEMENTS = ["C", "N", "O", "S", "F", "Cl", "Br", "I", "P", "B", "Si", "Se"]
@@ -28,6 +28,11 @@ BONDS = {
     Chem.BondType.DOUBLE: 2,
     Chem.BondType.TRIPLE: 3,
     Chem.BondType.AROMATIC: 4,
+}
+CHIRAL_TAGS = {
+    Chem.ChiralType.CHI_UNSPECIFIED: 0,
+    Chem.ChiralType.CHI_TETRAHEDRAL_CW: 1,
+    Chem.ChiralType.CHI_TETRAHEDRAL_CCW: 2,
 }
 AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
 K_NEIGHBORS = 16
@@ -77,6 +82,12 @@ def drug_graph(molecule):
             else len(HYBRIDIZATIONS),
             min(atom.GetTotalNumHs(), 4),
             int(atom.IsInRing()),
+            # Eighth column: the tetrahedral chirality tag. Read from the
+            # molecular graph rather than the coordinates, because the geometry
+            # cannot carry it -- the encoders see only interatomic distances,
+            # which a reflection leaves unchanged. Encoders ignore this column
+            # unless asked for it, so adding it changed no existing result.
+            CHIRAL_TAGS.get(atom.GetChiralTag(), 3),
         ]
         for atom in molecule.GetAtoms()
     ]
