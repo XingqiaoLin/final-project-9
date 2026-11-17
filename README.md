@@ -67,6 +67,19 @@ so the same matrix command can be re-issued until everything finishes.
 Pass the same `--epochs` on every resume: the cosine schedule is derived from
 it, and changing it mid-run changes the learning rate for the remaining epochs.
 
+To check that resuming actually works rather than trusting that it does:
+
+```bash
+python scripts/verify_resume.py
+```
+
+It launches a short run, SIGKILLs it mid-flight once two epochs have landed —
+SIGKILL rather than SIGTERM, because a session death gives no chance to clean
+up — then re-issues the identical command and asserts the history runs 1..N
+once each, with the pre-kill epochs unchanged and a `results.json` at the end.
+It refuses to pass if the kill happened to land after the run had already
+finished, which is the way this check fails silently.
+
 `--output-root` must point somewhere that outlives the session
 (`/kaggle/working` on Kaggle, a mounted Drive folder on Colab). The default
 `runs/` lives in the container and disappears with it.

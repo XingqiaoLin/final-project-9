@@ -358,10 +358,14 @@ def main():
                 "args": vars(args),
             },
         )
+        # Written every epoch, not once at the end. A run killed by a session
+        # timeout used to leave no readable progress file at all: the history
+        # survived only inside last.pt, which is fine for resuming but useless
+        # for watching a long run. Fifty rows of CSV costs nothing.
+        pd.DataFrame(history).to_csv(output / "history.csv", index=False)
         if bad_epochs >= args.patience:
             break
 
-    pd.DataFrame(history).to_csv(output / "history.csv", index=False)
     if best_state is None:
         raise RuntimeError("No valid checkpoint was produced")
     model.load_state_dict(best_state)
