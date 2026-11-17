@@ -178,7 +178,12 @@ def prepare_data(args):
         drug_id: drug_graph(conformers[drug_id])
         for drug_id in combined["did"].unique()
     }
-    protein_uses_geometry = args.ablation in {"full", "no_drug_3d"}
+    # Read the flag off the ablation table rather than restating the list here,
+    # so a new ablation cannot silently get the wrong protein edge topology.
+    # Spatial k-NN edges are built only when the protein branch keeps geometry;
+    # the shuffled_* ablations do keep it, and randomise the coordinates inside
+    # the model instead.
+    protein_uses_geometry = E3DTI.ABLATIONS[args.ablation][1]
     protein_graphs = {
         protein_id: protein_graph(
             *structures[protein_id], geometry_neighbors=protein_uses_geometry

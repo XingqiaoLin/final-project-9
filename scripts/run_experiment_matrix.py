@@ -12,6 +12,9 @@ DATASETS = {
     "human": ("random", "cold"),
 }
 ABLATIONS = ("full", "no_drug_3d", "no_protein_3d", "no_3d")
+# The capacity-matched geometry control; see docs/experiment_protocol.md. Kept
+# separate from ABLATIONS so --all-ablations keeps its published meaning.
+SHUFFLE_ABLATIONS = ("full", "shuffled_coords")
 
 
 def parse_args():
@@ -19,6 +22,12 @@ def parse_args():
     parser.add_argument("--seeds", nargs="+", type=int, default=[1, 2, 3])
     parser.add_argument("--all-datasets", action="store_true")
     parser.add_argument("--all-ablations", action="store_true")
+    parser.add_argument(
+        "--shuffle-control",
+        action="store_true",
+        help="run full against shuffled_coords only: the capacity-matched "
+        "geometry comparison the check-in feedback asked for",
+    )
     parser.add_argument("--dataset", choices=DATASETS, default="biosnap")
     parser.add_argument("--split", default="random")
     parser.add_argument("--extra", nargs=argparse.REMAINDER, default=[])
@@ -32,7 +41,12 @@ def main():
         if args.all_datasets
         else [(args.dataset, args.split)]
     )
-    ablations = ABLATIONS if args.all_ablations else ("full",)
+    if args.all_ablations:
+        ablations = ABLATIONS
+    elif args.shuffle_control:
+        ablations = SHUFFLE_ABLATIONS
+    else:
+        ablations = ("full",)
     for dataset, split in combinations:
         for ablation in ablations:
             for seed in args.seeds:

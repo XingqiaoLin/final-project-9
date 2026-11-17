@@ -84,10 +84,40 @@ class EGNN(nn.Module):
         return h
 
 
+def shuffle_positions_within_graphs(pos, batch):
+    """Permute coordinates among the nodes of each graph, independently per graph.
+
+    This is the capacity-matched geometry control. Turning geometry off
+    (`no_drug_3d` and friends) removes an input pathway: the RBF features go to
+    zero and the coordinate-update MLP stops contributing, so a drop in score
+    could be read as the model having less to work with rather than the geometry
+    having carried signal. Shuffling instead keeps every tensor shape, every
+    parameter and every code path identical, and keeps each molecule's own set
+    of coordinates intact -- it only destroys which atom sits where. A model
+    that scores the same with shuffled coordinates was not using the geometry.
+
+    A fresh permutation is drawn on every forward pass, like dropout noise, so
+    the coordinates cannot be memorised. That makes evaluation of this ablation
+    stochastic; it is seeded and restored along with the rest of the RNG state.
+    """
+    keys = torch.rand(len(batch), device=pos.device)
+    # batch is ascending and keys lie in [0, 1), so sorting batch + key keeps
+    # every node inside its own graph's block and randomises order within it.
+    order = torch.argsort(batch.to(keys.dtype) + keys)
+    return pos[order]
+
+
 class DrugEncoder(nn.Module):
-    def __init__(self, dim: int, n_layers: int, use_geometry: bool = True):
+    def __init__(
+        self,
+        dim: int,
+        n_layers: int,
+        use_geometry: bool = True,
+        shuffle_coords: bool = False,
+    ):
         super().__init__()
         self.use_geometry = use_geometry
+        self.shuffle_coords = shuffle_coords
         self.embeddings = nn.ModuleList([nn.Embedding(v, dim) for v in ATOM_VOCAB])
         self.bond = nn.Embedding(N_BOND, 16)
         self.egnn = EGNN(dim, 16, n_layers)
@@ -97,9 +127,12 @@ class DrugEncoder(nn.Module):
             embedding(graph["feat"][:, i])
             for i, embedding in enumerate(self.embeddings)
         )
+        pos = graph["pos"]
+        if self.shuffle_coords:
+            pos = shuffle_positions_within_graphs(pos, graph["batch"])
         return self.egnn(
             h,
-            graph["pos"],
+            pos,
             graph["edge"],
             self.bond(graph["eattr"]),
             use_geometry=self.use_geometry,
@@ -107,9 +140,16 @@ class DrugEncoder(nn.Module):
 
 
 class ProteinEncoder(nn.Module):
-    def __init__(self, dim: int, n_layers: int, use_geometry: bool = True):
+    def __init__(
+        self,
+        dim: int,
+        n_layers: int,
+        use_geometry: bool = True,
+        shuffle_coords: bool = False,
+    ):
         super().__init__()
         self.use_geometry = use_geometry
+        self.shuffle_coords = shuffle_coords
         self.aa = nn.Embedding(21, dim)
         self.plddt = nn.Linear(1, dim)
         self.separation = nn.Embedding(len(SEP_BINS) + 1, 16)
@@ -117,9 +157,12 @@ class ProteinEncoder(nn.Module):
 
     def forward(self, graph):
         h = self.aa(graph["feat"]) + self.plddt(graph["plddt"][:, None])
+        pos = graph["pos"]
+        if self.shuffle_coords:
+            pos = shuffle_positions_within_graphs(pos, graph["batch"])
         return self.egnn(
             h,
-            graph["pos"],
+            pos,
             graph["edge"],
             self.separation(graph["eattr"]),
             use_geometry=self.use_geometry,
@@ -248,11 +291,20 @@ class MLPDecoder(nn.Module):
 
 
 class E3DTI(nn.Module):
+    # drug geometry, protein geometry, shuffle drug coords, shuffle protein coords.
+    #
+    # The no_*_3d family switches the geometry pathway off. The shuffled_*
+    # family leaves architecture and capacity untouched and randomises which
+    # node holds which coordinate instead; see
+    # shuffle_positions_within_graphs for why that is the stronger control.
     ABLATIONS = {
-        "full": (True, True),
-        "no_drug_3d": (False, True),
-        "no_protein_3d": (True, False),
-        "no_3d": (False, False),
+        "full": (True, True, False, False),
+        "no_drug_3d": (False, True, False, False),
+        "no_protein_3d": (True, False, False, False),
+        "no_3d": (False, False, False, False),
+        "shuffled_coords": (True, True, True, True),
+        "shuffled_drug_coords": (True, True, True, False),
+        "shuffled_protein_coords": (True, True, False, True),
     }
 
     def __init__(
@@ -267,9 +319,16 @@ class E3DTI(nn.Module):
         super().__init__()
         if ablation not in self.ABLATIONS:
             raise ValueError(f"Unknown ablation {ablation!r}; choose {sorted(self.ABLATIONS)}")
-        drug_geometry, protein_geometry = self.ABLATIONS[ablation]
-        self.drug = DrugEncoder(dim, drug_layers, drug_geometry)
-        self.protein = ProteinEncoder(dim, protein_layers, protein_geometry)
+        (
+            drug_geometry,
+            protein_geometry,
+            shuffle_drug,
+            shuffle_protein,
+        ) = self.ABLATIONS[ablation]
+        self.drug = DrugEncoder(dim, drug_layers, drug_geometry, shuffle_drug)
+        self.protein = ProteinEncoder(
+            dim, protein_layers, protein_geometry, shuffle_protein
+        )
         self.bcn = weight_norm(
             MaskedBANLayer(dim, dim, ban_dim, heads), name="h_mat", dim=None
         )

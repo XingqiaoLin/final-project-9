@@ -101,6 +101,31 @@ python scripts/run_experiment_matrix.py \
   --all-ablations
 ```
 
+### The capacity-matched control
+
+The four variants above remove an input pathway, so a drop in score can be
+argued away as the model having less to work with. Three further variants
+answer the question without that confound by keeping architecture, parameter
+count and every code path identical to `full`, and randomly reassigning the
+coordinates among each graph's nodes on every forward pass:
+
+- `shuffled_coords`
+- `shuffled_drug_coords`
+- `shuffled_protein_coords`
+
+A model that scores the same as `full` under `shuffled_coords` was not using
+the geometry. Run the comparison with:
+
+```bash
+python scripts/run_experiment_matrix.py \
+  --dataset biosnap --split cluster --seeds 1 2 3 \
+  --shuffle-control
+```
+
+See `docs/experiment_protocol.md` for the two caveats worth stating when
+reporting these: the protein contact topology survives the shuffle, and the
+shuffle arms carry extra within-run noise.
+
 `no_3d` is an internal geometry ablation, not the official DrugBAN baseline.
 The official baseline uses a DGL/DGLLife molecular GCN plus a protein CNN and
 must be run from the DrugBAN implementation with the same CSV splits, seeds,
