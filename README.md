@@ -84,6 +84,22 @@ finished, which is the way this check fails silently.
 (`/kaggle/working` on Kaggle, a mounted Drive folder on Colab). The default
 `runs/` lives in the container and disappears with it.
 
+### Colab, which is what we use now
+
+`notebooks/colab_train.ipynb` — one click:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/XingqiaoLin/final-project-9/blob/yogesh/drug-egnn/notebooks/colab_train.ipynb)
+
+It mounts Google Drive and writes every run to `MyDrive/e3dti-runs`, which is
+the whole reason to prefer it: results survive a disconnect. Three Kaggle
+sessions wiped `/kaggle/working` in one afternoon and took finished runs with
+them, which is recoverable only because `--resume` and `docs/results.md`
+exist. On Drive the problem does not arise.
+
+Set **Runtime → Change runtime type → T4 GPU**, then **Run all**. Authorising
+Drive is the only interaction needed. After a disconnect, re-run cells 1–4 and
+7: finished runs are skipped, interrupted ones resume.
+
 To work through a whole matrix unattended inside session limits:
 
 ```bash
