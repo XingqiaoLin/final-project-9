@@ -163,6 +163,28 @@ early-stopping criterion, and metrics. Do not label the internal ablation as
 DrugBAN in a report. See `docs/experiment_protocol.md` for the fair-comparison
 checklist and the cluster-split validation caveat.
 
+## 8b: cleaning the shipped splits
+
+The shipped DrugBAN files carry duplicate rows and cross-split pair leakage.
+`human/cold` is the bad one: 394 duplicated training rows and 12 pairs in both
+validation and test. Validation picks the checkpoint *and* the decision
+threshold, so those 12 steer the model and are then scored as held out.
+
+```bash
+python train_e3dti.py --dataset human --split cold --seed 1 --clean-splits
+```
+
+Off by default, because the shipped rows keep results comparable with published
+DrugBAN numbers. Cleaned runs go to a `<split>_cleaned` output directory so
+they can never be confused with shipped ones, and `results.json` records the
+pre-cleaning audit alongside exactly what was removed.
+
+Cross-split overlaps are resolved on the earlier frame, so cleaning never costs
+the test set a row; only deduplication touches test. `docs/data_integrity_audit.md`
+has the counts and the reporting caveat — the comparison is underpowered at
+n=304, so run the shipped and cleaned arms on the same seeds and report paired
+per-seed differences, not two means.
+
 ## 9: all supported benchmark splits
 
 The six combinations are BindingDB random/cluster, BioSNAP random/cluster, and

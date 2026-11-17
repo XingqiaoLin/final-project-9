@@ -89,6 +89,32 @@ rows. Whatever cleaning produced that number did not reach the cold split.
 `biosnap/random`'s leakage is real but small: 3 leaked pairs in 5,480 test rows
 (0.05%), below the resolution of the comparison.
 
+A later pass found duplication the first audit missed, because
+`audit_splits` only counts repeats inside `train`. `human/cold` also repeats
+5 pairs inside validation and 7 inside test. A repeated test pair is counted
+twice in every metric computed over it, so these matter too.
+
+### Resolved: `--clean-splits`
+
+`e3dti.data.clean_splits`, wired to `train_e3dti.py --clean-splits`. Off by
+default, because the shipped rows are what keeps results comparable with
+published DrugBAN numbers. Cleaned runs are written to a `<split>_cleaned`
+directory so they can never be mistaken for shipped ones, and `results.json`
+records the pre-cleaning audit plus exactly what was removed.
+
+On `human/cold`:
+
+| Frame | Shipped | Cleaned | Removed |
+|---|---|---|---|
+| train | 3,435 | 3,041 | 394 duplicates |
+| val | 155 | 138 | 5 duplicates, then 12 shared with test |
+| test | 311 | 304 | 7 duplicates |
+
+Cross-split overlaps are resolved on the earlier frame, so cleaning never
+costs the test set a row; only deduplication touches test. After cleaning,
+all four audit counters are zero, and the trainer raises if any leakage
+survives.
+
 ### Decision needed
 
 The pipeline reports this audit and changes nothing, by design —
@@ -105,8 +131,32 @@ Options for human/cold, for the team to choose:
 3. Run both and report the difference. On a 3,901-row dataset the extra cost is
    small, and the gap is itself a result.
 
-Option 3 is recommended: it preserves comparability and measures how much the
-contamination was worth.
+Option 3 was recommended on principle. That recommendation needs a correction
+on statistical power.
+
+The cleaned test set is 304 rows and the contamination is 12 pairs, under 4%.
+A plausible effect on AUROC is 0.01-0.02, which is smaller than the
+seed-to-seed spread usually seen on a test set this small. Compared as two
+independent means over three seeds, the difference would be buried in noise
+and reporting it as a measured quantity would overstate what three runs can
+support.
+
+What rescues it is pairing. Run shipped and cleaned on the **same seeds**, so
+initialisation and batch order are identical and only the data differs, then
+report the three per-seed differences rather than two means with error bars.
+Most of the seed noise cancels and the differences can at least be read for a
+consistent sign. `scripts/run_kaggle_matrix.py --include-human` interleaves the
+arms this way.
+
+So: report the cleaned split as the primary human/cold result, run the shipped
+arm paired by seed if quota allows, and state plainly that the contamination
+comparison is underpowered at n=304. A measured limitation is worth more than
+a confident number that three seeds cannot support.
+
+Priority note: human/cold sits behind the matched-capacity DrugBAN baseline.
+The project's claim is comparative, and until that baseline exists there is
+nothing to compare against, so quota spent here first would be spent on the
+wrong thing.
 
 ## Reproducing
 

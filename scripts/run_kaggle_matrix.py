@@ -36,17 +36,44 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 # biosnap/random seed 1 full is omitted: it is run separately as the first
 # timing run. If it is missing, --resume picks it up anyway.
 RUNS = [
-    ("biosnap", "cluster", "full", 1),
-    ("biosnap", "cluster", "shuffled_coords", 1),
-    ("biosnap", "cluster", "full", 2),
-    ("biosnap", "cluster", "shuffled_coords", 2),
-    ("biosnap", "cluster", "full", 3),
-    ("biosnap", "cluster", "shuffled_coords", 3),
-    ("biosnap", "random", "full", 2),
-    ("biosnap", "random", "full", 3),
-    ("biosnap", "random", "shuffled_coords", 1),
-    ("biosnap", "random", "shuffled_coords", 2),
-    ("biosnap", "random", "shuffled_coords", 3),
+    ("biosnap", "cluster", "full", 1, False),
+    ("biosnap", "cluster", "shuffled_coords", 1, False),
+    ("biosnap", "cluster", "full", 2, False),
+    ("biosnap", "cluster", "shuffled_coords", 2, False),
+    ("biosnap", "cluster", "full", 3, False),
+    ("biosnap", "cluster", "shuffled_coords", 3, False),
+    ("biosnap", "random", "full", 2, False),
+    ("biosnap", "random", "full", 3, False),
+    ("biosnap", "random", "shuffled_coords", 1, False),
+    ("biosnap", "random", "shuffled_coords", 2, False),
+    ("biosnap", "random", "shuffled_coords", 3, False),
+]
+
+# Human is a separate, lower-priority block: it is not worth spending quota on
+# before the matched-capacity DrugBAN baseline exists, because the project's
+# claim is comparative and there is nothing yet to compare against.
+#
+# Its training set is 3,041 cleaned rows against BioSNAP's 19,189, so an epoch
+# costs roughly a fifth as much and a run lands well under an hour.
+#
+# The shipped and cleaned arms are deliberately interleaved seed by seed. The
+# contamination being measured is 12 pairs in a 304-row test set, which is
+# small enough to disappear into seed-to-seed spread if the two arms are
+# compared as independent means. Paired by seed -- same initialisation, same
+# batch order, only the data differing -- the seed noise largely cancels and
+# the per-seed differences can at least be read for a consistent sign. Report
+# them as three paired differences, not as two means with error bars, and say
+# plainly that the comparison is underpowered at this sample size.
+HUMAN_RUNS = [
+    ("human", "cold", "full", 1, True),
+    ("human", "cold", "full", 1, False),
+    ("human", "cold", "full", 2, True),
+    ("human", "cold", "full", 2, False),
+    ("human", "cold", "full", 3, True),
+    ("human", "cold", "full", 3, False),
+    ("human", "cold", "shuffled_coords", 1, True),
+    ("human", "cold", "shuffled_coords", 2, True),
+    ("human", "cold", "shuffled_coords", 3, True),
 ]
 
 
@@ -74,6 +101,12 @@ def parse_args():
         "schedule is derived from it",
     )
     parser.add_argument(
+        "--include-human",
+        action="store_true",
+        help="append the human/cold block, shipped against cleaned, paired by "
+        "seed. Hold this back until the DrugBAN baseline exists.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print the plan and what is already done, then exit",
@@ -81,30 +114,32 @@ def parse_args():
     return parser.parse_args()
 
 
-def results_path(output_root: Path, dataset, split, ablation, seed) -> Path:
+def results_path(output_root: Path, dataset, split, ablation, seed, clean) -> Path:
     return (
         output_root
-        / f"{dataset}_{split}"
+        / f"{dataset}_{split}{'_cleaned' if clean else ''}"
         / ablation
         / f"seed_{seed}"
         / "results.json"
     )
 
 
-def describe(dataset, split, ablation, seed) -> str:
-    return f"{dataset}/{split} {ablation} seed={seed}"
+def describe(dataset, split, ablation, seed, clean) -> str:
+    suffix = " [cleaned]" if clean else ""
+    return f"{dataset}/{split} {ablation} seed={seed}{suffix}"
 
 
 def main() -> int:
     args = parse_args()
     output_root = Path(args.output_root)
 
-    pending = [run for run in RUNS if not results_path(output_root, *run).exists()]
-    done = len(RUNS) - len(pending)
-    print(f"matrix: {len(RUNS)} runs, {done} already finished, {len(pending)} to go")
+    planned = RUNS + (HUMAN_RUNS if args.include_human else [])
+    pending = [run for run in planned if not results_path(output_root, *run).exists()]
+    done = len(planned) - len(pending)
+    print(f"matrix: {len(planned)} runs, {done} already finished, {len(pending)} to go")
 
     if args.dry_run:
-        for run in RUNS:
+        for run in planned:
             marker = "done" if results_path(output_root, *run).exists() else "todo"
             print(f"  [{marker}] {describe(*run)}")
         return 0
@@ -124,7 +159,7 @@ def main() -> int:
             break
 
         print(f"\n=== {describe(*run)}  (+{elapsed_hours:.1f}h)", flush=True)
-        dataset, split, ablation, seed = run
+        dataset, split, ablation, seed, clean = run
         command = [
             sys.executable,
             "train_e3dti.py",
@@ -136,6 +171,8 @@ def main() -> int:
             "--output-root", str(output_root),
             "--resume",
         ]
+        if clean:
+            command.append("--clean-splits")
         result = subprocess.run(command, cwd=REPOSITORY)
 
         if result.returncode == 0:

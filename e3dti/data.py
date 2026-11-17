@@ -162,6 +162,69 @@ def pair_set(frame):
     return set(zip(frame["SMILES"], frame["Protein"]))
 
 
+def clean_splits(frames):
+    """Remove duplicate rows and cross-split pair leakage. Opt-in only.
+
+    The shipped DrugBAN files carry three defects that this undoes, in order:
+
+    1. the same (SMILES, Protein) pair repeated inside a frame, which silently
+       upweights those pairs in the loss and in any metric computed over them;
+    2. training pairs that reappear in validation or test, which is the leakage
+       DrugBAN's own published numbers also carry;
+    3. validation pairs that reappear in test, which is the worst of the three
+       for us specifically -- validation selects both the checkpoint and the
+       decision threshold, so those pairs steer the model and are then scored
+       as if they had been held out.
+
+    `human/cold` is the split this exists for: 394 duplicated training rows
+    (11.5%) and 12 pairs in both validation and test (3.9% of a 311-row test
+    set), on a split the check-in names as carrying the out-of-domain claim.
+
+    Overlaps are resolved by dropping the row from the *earlier* frame -- train
+    loses pairs shared with validation or test, validation loses pairs shared
+    with test -- so cross-split cleaning never costs the test set a row. Test is
+    where the reported numbers come from and human/cold's is only 311 rows;
+    shrinking it would cost statistical power on exactly the comparison being
+    made.
+
+    Deduplication is the one step that does touch test, because an exact repeat
+    is counted twice in every metric computed over it. On human/cold this takes
+    test from 311 rows to 304 distinct pairs, and validation from 155 to 150
+    before the 12 shared pairs are dropped.
+
+    Cleaning makes results non-comparable with published DrugBAN numbers, which
+    is why it is a flag and not the default. See docs/data_integrity_audit.md.
+    """
+    cleaned = {
+        name: frame.drop_duplicates(["SMILES", "Protein"]).reset_index(drop=True)
+        for name, frame in frames.items()
+    }
+    report = {
+        f"{name}_duplicates_removed": len(frames[name]) - len(cleaned[name])
+        for name in frames
+    }
+
+    def drop_pairs(frame, forbidden):
+        if not forbidden:
+            return frame, 0
+        keep = ~pd.Series(
+            list(zip(frame["SMILES"], frame["Protein"])), index=frame.index
+        ).isin(forbidden)
+        return frame[keep].reset_index(drop=True), int((~keep).sum())
+
+    test_pairs = pair_set(cleaned["test"])
+    cleaned["val"], report["val_rows_shared_with_test_removed"] = drop_pairs(
+        cleaned["val"], test_pairs
+    )
+    cleaned["train"], report["train_rows_shared_with_val_or_test_removed"] = (
+        drop_pairs(cleaned["train"], pair_set(cleaned["val"]) | test_pairs)
+    )
+
+    report["rows_before"] = {name: len(frame) for name, frame in frames.items()}
+    report["rows_after"] = {name: len(frame) for name, frame in cleaned.items()}
+    return cleaned, report
+
+
 def audit_splits(frames):
     pairs = {name: pair_set(frame) for name, frame in frames.items()}
     return {

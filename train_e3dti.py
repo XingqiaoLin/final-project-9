@@ -28,6 +28,7 @@ from sklearn.model_selection import train_test_split
 from e3dti.data import (
     PairDataset,
     audit_splits,
+    clean_splits,
     collate_pairs,
     drug_graph,
     load_drug_conformers,
@@ -63,6 +64,15 @@ def parse_args():
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--ablation", choices=sorted(E3DTI.ABLATIONS), default="full")
+    parser.add_argument(
+        "--clean-splits",
+        action="store_true",
+        help="drop duplicate rows and cross-split pair leakage before "
+        "training. Off by default: the shipped rows keep results comparable "
+        "with published DrugBAN numbers. Intended for human/cold, whose "
+        "validation and test sets share 12 pairs. See "
+        "docs/data_integrity_audit.md.",
+    )
     parser.add_argument("--max-train-pairs", type=int)
     parser.add_argument("--max-val-pairs", type=int)
     parser.add_argument("--max-test-pairs", type=int)
@@ -147,7 +157,18 @@ def prepare_data(args):
         ],
     )
     frames = read_splits(root, args.dataset, args.split)
+    # Audit the files as shipped, before any cleaning, so the record in
+    # results.json always describes what the published split actually contains.
     original_audit = audit_splits(frames)
+    cleaning_report = None
+    if args.clean_splits:
+        frames, cleaning_report = clean_splits(frames)
+        print("cleaned=", cleaning_report, flush=True)
+        remaining = audit_splits(frames)
+        if any(remaining[key] for key in remaining):
+            raise RuntimeError(
+                f"cleaning left leakage behind: {remaining}"
+            )
     caps = {
         "train": args.max_train_pairs,
         "val": args.max_val_pairs,
@@ -190,7 +211,7 @@ def prepare_data(args):
         )
         for protein_id in combined["pid"].unique()
     }
-    return frames, drug_graphs, protein_graphs, original_audit
+    return frames, drug_graphs, protein_graphs, original_audit, cleaning_report
 
 
 def make_loaders(args, frames, drug_graphs, protein_graphs):
@@ -242,9 +263,13 @@ def main():
         raise ValueError(f"{args.dataset} supports {VALID_SPLITS[args.dataset]}, not {args.split!r}")
     seed_everything(args.seed)
     device = choose_device(args.device)
+    # The cleaned and shipped versions of a split are different experiments and
+    # must not share a directory: results.json is what --resume uses to decide a
+    # run is finished, so a shared path would let one silently stand in for the
+    # other.
     output = (
         Path(args.output_root)
-        / f"{args.dataset}_{args.split}"
+        / f"{args.dataset}_{args.split}{'_cleaned' if args.clean_splits else ''}"
         / args.ablation
         / f"seed_{args.seed}"
     )
@@ -256,7 +281,7 @@ def main():
         return
 
     started = time.time()
-    frames, drug_graphs, protein_graphs, split_audit = prepare_data(args)
+    frames, drug_graphs, protein_graphs, split_audit, cleaning_report = prepare_data(args)
     print(
         "pairs=",
         {name: len(frame) for name, frame in frames.items()},
@@ -391,6 +416,7 @@ def main():
         "best_epoch": int(np.argmax([row["val_auroc"] for row in history]) + 1),
         "n_pairs": {name: len(frame) for name, frame in frames.items()},
         "split_audit": split_audit,
+        "cleaning": cleaning_report,
         "validation": validation,
         "test": test,
         "elapsed_seconds": time.time() - started,
