@@ -167,7 +167,14 @@ def capture_rng_state():
 def restore_rng_state(state):
     random.setstate(state["python"])
     np.random.set_state(state["numpy"])
-    torch.set_rng_state(state["torch"])
+    # torch.set_rng_state insists on a CPU uint8 tensor and raises
+    # "RNG state must be a torch.ByteTensor" otherwise. A checkpoint reloaded
+    # on a different torch build can hand back something that is uint8 in
+    # value but not that exact type, which killed every resumed run on
+    # torch 2.14 while passing on 2.15. Coercing costs nothing and makes the
+    # checkpoint portable across the versions a free GPU session happens to
+    # give you.
+    torch.set_rng_state(state["torch"].cpu().to(torch.uint8))
 
 
 def save_checkpoint(path, payload):
