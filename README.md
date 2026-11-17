@@ -45,6 +45,32 @@ python train_e3dti.py \
   --device cpu --output-root runs-smoke
 ```
 
+## 6b: long runs on Kaggle or Colab
+
+Free GPU sessions are time-limited and are killed without warning, so any run
+longer than a session needs `--resume`:
+
+```bash
+python train_e3dti.py \
+  --dataset biosnap --split random --seed 1 \
+  --output-root /kaggle/working/runs \
+  --resume
+```
+
+`--resume` writes `last.pt` after every epoch (atomically, so a session killed
+mid-write cannot corrupt it) and restores the model, optimizer, scheduler,
+history, early-stopping counters and the Python/NumPy/Torch RNG state. Re-run
+the identical command after a session dies and training continues from the next
+epoch. If `results.json` is already in the output directory the run is skipped,
+so the same matrix command can be re-issued until everything finishes.
+
+Pass the same `--epochs` on every resume: the cosine schedule is derived from
+it, and changing it mid-run changes the learning rate for the remaining epochs.
+
+`--output-root` must point somewhere that outlives the session
+(`/kaggle/working` on Kaggle, a mounted Drive folder on Colab). The default
+`runs/` lives in the container and disappears with it.
+
 ## 7: multiple seeds
 
 After the smoke run succeeds, run at least three seeds with the full model:
@@ -111,9 +137,10 @@ The summary is written to `runs/summary.csv`.
 
 ```text
 runs/<dataset>_<split>/<ablation>/seed_<seed>/
-├── best.pt
+├── best.pt          # best validation AUROC so far
+├── last.pt          # resume point, written every epoch (--resume only)
 ├── history.csv
-└── results.json
+└── results.json     # written once the run finishes; its presence means done
 ```
 
 Only validation AUROC selects the checkpoint. Test labels are used once after

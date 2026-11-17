@@ -67,6 +67,13 @@ def parse_args():
     parser.add_argument("--max-val-pairs", type=int)
     parser.add_argument("--max-test-pairs", type=int)
     parser.add_argument("--output-root", default="runs")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue from last.pt in the output directory if one exists, and "
+        "skip the run entirely if results.json is already there. Intended for "
+        "session-limited platforms such as Kaggle and Colab.",
+    )
     return parser.parse_args()
 
 
@@ -86,6 +93,33 @@ def seed_everything(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+CHECKPOINT_NAME = "last.pt"
+
+
+def capture_rng_state():
+    """Batch order and dropout draw from these, so a resumed run must restore
+    them or it is not the same run the seed promised."""
+    return {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+
+
+def restore_rng_state(state):
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+
+
+def save_checkpoint(path, payload):
+    """Write via a temporary file: a session killed mid-write must not leave a
+    corrupt checkpoint behind, which would cost the whole run."""
+    temporary = path.with_name(path.name + ".tmp")
+    torch.save(payload, temporary)
+    temporary.replace(path)
 
 
 def stratified_cap(frame, maximum, seed):
@@ -212,6 +246,10 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     print(f"device={device} output={output}")
 
+    if args.resume and (output / "results.json").exists():
+        print(f"{output / 'results.json'} already exists; nothing to do")
+        return
+
     started = time.time()
     frames, drug_graphs, protein_graphs, split_audit = prepare_data(args)
     print(
@@ -243,7 +281,29 @@ def main():
     best_auroc = -math.inf
     best_state = None
     bad_epochs = 0
-    for epoch in range(1, args.epochs + 1):
+    start_epoch = 1
+
+    checkpoint_path = output / CHECKPOINT_NAME
+    if args.resume and checkpoint_path.exists():
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
+        model.load_state_dict(checkpoint["model"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        scheduler.load_state_dict(checkpoint["scheduler"])
+        history = checkpoint["history"]
+        best_auroc = checkpoint["best_auroc"]
+        best_state = checkpoint["best_state"]
+        bad_epochs = checkpoint["bad_epochs"]
+        start_epoch = checkpoint["epoch"] + 1
+        restore_rng_state(checkpoint["rng"])
+        print(
+            f"resumed at epoch {start_epoch} of {args.epochs} "
+            f"(best val_auroc={best_auroc:.4f}, {bad_epochs} epochs without "
+            f"improvement)"
+        )
+
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         running_loss = 0.0
         for drug, protein, label in loaders["train"]:
@@ -277,6 +337,21 @@ def main():
             f"epoch={epoch} train_loss={row['train_loss']:.4f} "
             f"val_auroc={validation['auroc']:.4f} val_auprc={validation['auprc']:.4f}"
             + (" *" if improved else "")
+        )
+        save_checkpoint(
+            checkpoint_path,
+            {
+                "epoch": epoch,
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
+                "history": history,
+                "best_auroc": best_auroc,
+                "best_state": best_state,
+                "bad_epochs": bad_epochs,
+                "rng": capture_rng_state(),
+                "args": vars(args),
+            },
         )
         if bad_epochs >= args.patience:
             break
