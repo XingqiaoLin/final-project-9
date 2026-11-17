@@ -37,7 +37,7 @@ from e3dti.data import (
     read_splits,
     stable_id,
 )
-from e3dti.model import E3DTI
+from e3dti.model import E3DTI, DrugBAN2D
 
 
 VALID_SPLITS = {
@@ -64,6 +64,14 @@ def parse_args():
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--ablation", choices=sorted(E3DTI.ABLATIONS), default="full")
+    parser.add_argument(
+        "--arch",
+        choices=ARCHITECTURES,
+        default="e3dti",
+        help="e3dti is the 3D model; drugban is the 2D baseline at --dim; "
+        "drugban_matched widens it to E3DTI's parameter count, which is the "
+        "comparison the check-in feedback asked for",
+    )
     parser.add_argument(
         "--clean-splits",
         action="store_true",
@@ -106,6 +114,35 @@ def seed_everything(seed):
 
 
 CHECKPOINT_NAME = "last.pt"
+
+# Width chosen so the baseline's parameter count lands within 0.2% of E3DTI's
+# at the default settings (1,649,040 against 1,646,686). The check-in feedback
+# asked for a capacity-matched control: without it, a win for E3DTI could be
+# explained by it simply being the larger model. Verified by
+# tests/test_drugban_baseline.py, which fails if the gap exceeds 2%.
+MATCHED_BASELINE_DIM = 202
+
+ARCHITECTURES = ("e3dti", "drugban", "drugban_matched")
+
+
+def build_model(args):
+    """One place where architecture choice happens, so the trainer, the
+    parameter-count script and the tests cannot disagree about what
+    `--arch drugban_matched` means."""
+    if args.arch == "e3dti":
+        return E3DTI(
+            dim=args.dim,
+            drug_layers=args.drug_layers,
+            protein_layers=args.protein_layers,
+            ablation=args.ablation,
+        )
+    if args.ablation != "full":
+        raise ValueError(
+            f"--ablation {args.ablation} is a geometry ablation and means "
+            f"nothing for --arch {args.arch}, which has no geometry"
+        )
+    dim = MATCHED_BASELINE_DIM if args.arch == "drugban_matched" else args.dim
+    return DrugBAN2D(dim=dim)
 
 
 def capture_rng_state():
@@ -270,7 +307,7 @@ def main():
     output = (
         Path(args.output_root)
         / f"{args.dataset}_{args.split}{'_cleaned' if args.clean_splits else ''}"
-        / args.ablation
+        / (args.ablation if args.arch == "e3dti" else args.arch)
         / f"seed_{args.seed}"
     )
     output.mkdir(parents=True, exist_ok=True)
@@ -289,12 +326,11 @@ def main():
         split_audit,
     )
     loaders = make_loaders(args, frames, drug_graphs, protein_graphs)
-    model = E3DTI(
-        dim=args.dim,
-        drug_layers=args.drug_layers,
-        protein_layers=args.protein_layers,
-        ablation=args.ablation,
-    ).to(device)
+    model = build_model(args).to(device)
+    print(
+        f"arch={args.arch} parameters="
+        f"{sum(p.numel() for p in model.parameters()):,}"
+    )
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )

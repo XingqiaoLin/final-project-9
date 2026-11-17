@@ -156,6 +156,40 @@ See `docs/experiment_protocol.md` for the two caveats worth stating when
 reporting these: the protein contact topology survives the shuffle, and the
 shuffle arms carry extra within-run noise.
 
+### The 2D baseline
+
+The project's claim is comparative, so a baseline is not optional. `--arch`
+selects it:
+
+```bash
+python train_e3dti.py --dataset biosnap --split cluster --seed 1 \
+  --arch drugban_matched
+```
+
+| `--arch` | What it is | Parameters |
+|---|---|---|
+| `e3dti` | the 3D model (default) | 1,646,686 |
+| `drugban` | 2D baseline at `--dim` | 1,016,710 at dim 128 |
+| `drugban_matched` | 2D baseline widened to E3DTI's capacity | 1,649,040 |
+
+`drugban_matched` is the comparison the check-in feedback asked for: without
+capacity held fixed, a win for E3DTI could be explained by it being the larger
+model. The width is pinned by a test that fails if the gap exceeds 2%.
+
+The baseline is a molecular GCN over the covalent bond graph plus a 1-D CNN
+over the amino-acid sequence, feeding the same `BANLayer` / `MLPDecoder`. It
+never reads coordinates — a test asserts its predictions are *exactly*
+unchanged under rotation and reflection, not merely close.
+
+This is a reimplementation inside this pipeline, not the official DrugBAN
+repository, and that is deliberate. The six protocol items in
+`docs/experiment_protocol.md` that must match before a comparison means
+anything — split membership, seeds, early-stopping rule, decision threshold,
+metric implementation, duplicate handling — are identical by construction when
+both arms run through the same loader and trainer. What it gives up is
+comparability with the *published* numbers, which stays a separate exercise.
+Do not put reimplemented and published results in one table.
+
 `no_3d` is an internal geometry ablation, not the official DrugBAN baseline.
 The official baseline uses a DGL/DGLLife molecular GCN plus a protein CNN and
 must be run from the DrugBAN implementation with the same CSV splits, seeds,

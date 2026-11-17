@@ -169,6 +169,91 @@ class ProteinEncoder(nn.Module):
         )
 
 
+class DrugBANDrugEncoder(nn.Module):
+    """DrugBAN's drug branch: a GCN over the covalent bond graph.
+
+    The contrast with DrugEncoder is the point of the whole project, so the two
+    are kept as alike as possible apart from the thing under test. Atom
+    features, embedding dimension and the fusion layers are identical; what
+    differs is that this sees only *which atoms are bonded*, with no distances
+    and no coordinates.
+
+    drug_graph ships a fully connected edge list with `eattr` holding the bond
+    type and 0 meaning "no bond", so the covalent graph is recovered by masking
+    rather than by building a second graph. That keeps both branches reading
+    byte-identical inputs.
+    """
+
+    def __init__(self, dim: int, n_layers: int = 3):
+        super().__init__()
+        self.embeddings = nn.ModuleList([nn.Embedding(v, dim) for v in ATOM_VOCAB])
+        self.layers = nn.ModuleList(
+            [nn.Linear(dim, dim) for _ in range(n_layers)]
+        )
+        self.norms = nn.ModuleList([nn.LayerNorm(dim) for _ in range(n_layers)])
+
+    def forward(self, graph):
+        h = sum(
+            embedding(graph["feat"][:, i])
+            for i, embedding in enumerate(self.embeddings)
+        )
+        src, dst = graph["edge"]
+        bonded = graph["eattr"] > 0
+        src, dst = src[bonded], dst[bonded]
+        degree = (
+            torch.zeros(len(h), 1, device=h.device)
+            .index_add_(0, dst, torch.ones(len(dst), 1, device=h.device))
+            .clamp(min=1)
+        )
+        for layer, norm in zip(self.layers, self.norms):
+            neighbours = torch.zeros_like(h).index_add_(0, dst, h[src]) / degree
+            h = norm(F.relu(layer(h + neighbours)))
+        return h
+
+
+class DrugBANProteinEncoder(nn.Module):
+    """DrugBAN's protein branch: a 1-D CNN over the amino-acid sequence.
+
+    Kernel widths 3/6/9 follow the published architecture. Residues arrive
+    flattened across the batch, so they are densified to (batch, length) for the
+    convolutions and scattered back, leaving the fusion layer reading exactly
+    the layout it reads from ProteinEncoder.
+
+    Padding positions are zeroed after every layer. Without that, convolutions
+    would smear real residues into padding and back, and a prediction would
+    depend on the longest protein in the batch -- the same defect the masked BAN
+    layer exists to prevent.
+    """
+
+    def __init__(self, dim: int, kernels=(3, 6, 9)):
+        super().__init__()
+        self.aa = nn.Embedding(21, dim)
+        self.convs = nn.ModuleList(
+            [
+                nn.Conv1d(dim, dim, kernel_size=k, padding=k // 2)
+                for k in kernels
+            ]
+        )
+        self.norms = nn.ModuleList([nn.BatchNorm1d(dim) for _ in kernels])
+
+    def forward(self, graph):
+        batch, index = graph["batch"], graph["idx"]
+        n_graphs = int(batch.max()) + 1
+        length = int(index.max()) + 1
+        h = self.aa(graph["feat"])
+
+        dense = h.new_zeros(n_graphs, length, h.size(-1))
+        dense[batch, index] = h
+        mask = torch.zeros(n_graphs, length, dtype=torch.bool, device=h.device)
+        mask[batch, index] = True
+
+        x = dense.transpose(1, 2)
+        for conv, norm in zip(self.convs, self.norms):
+            x = F.relu(norm(conv(x)[..., :length]))
+            x = x * mask[:, None, :]
+        return x.transpose(1, 2)[batch, index]
+
+
 def to_dense(h, batch, index, n_graphs):
     """Pad concatenated nodes and return both features and a validity mask."""
     max_nodes = int(index.max()) + 1
@@ -352,6 +437,39 @@ class E3DTI(nn.Module):
             drug, protein, drug_mask, protein_mask, softmax=False
         )
         return self.classifier(fused).squeeze(-1), attention
+
+
+class DrugBAN2D(nn.Module):
+    """The 2D baseline: DrugBAN's encoders feeding E3DTI's fusion unchanged.
+
+    This is a reimplementation inside this pipeline, not the official
+    repository, and that is a deliberate trade. docs/experiment_protocol.md
+    lists six things that must match before a comparison means anything --
+    split membership, seeds, early-stopping rule, decision threshold, metric
+    implementation and duplicate handling. Running through the same loader,
+    trainer and metrics makes all six identical by construction rather than by
+    hand. The official runner additionally selects on the test set in its
+    cross-domain path, so its unmodified output could not be compared anyway.
+
+    What is given up is comparability with the published numbers. Those remain
+    a separate exercise; see docs/experiment_protocol.md. Do not put the two in
+    one table.
+
+    `dim` is the lever for the capacity control: the check-in feedback asked for
+    a baseline matched on parameter count, so that a win for E3DTI cannot be
+    explained by it simply being the bigger model.
+    """
+
+    def __init__(self, dim=128, drug_layers=3, ban_dim=256, heads=2):
+        super().__init__()
+        self.drug = DrugBANDrugEncoder(dim, drug_layers)
+        self.protein = DrugBANProteinEncoder(dim)
+        self.bcn = weight_norm(
+            MaskedBANLayer(dim, dim, ban_dim, heads), name="h_mat", dim=None
+        )
+        self.classifier = MLPDecoder(ban_dim, 512, 128)
+
+    forward = E3DTI.forward
 
 
 def collate_graphs(graphs):

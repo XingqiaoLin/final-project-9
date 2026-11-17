@@ -33,20 +33,38 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 # part-way we are then left with complete, comparable pairs rather than three
 # `full` runs and nothing to compare them against.
 #
-# biosnap/random seed 1 full is omitted: it is run separately as the first
-# timing run. If it is missing, --resume picks it up anyway.
+# Entries are (dataset, split, arch, ablation, seed, clean).
+#
+# The cluster block runs first and completes a full three-way comparison one
+# seed at a time: the 3D model, the capacity-matched 2D baseline, and the
+# shuffled-coordinate control. Ordered this way, stopping early leaves whole
+# comparable triples rather than nine runs that cannot be set against anything.
+#
+# Without the drugban_matched arm there is no comparison at all -- the
+# project's question is "does 3D help", which is meaningless with only one
+# number. That is why the baseline is in the first block and not deferred.
+#
+# biosnap/random seed 1 e3dti/full is omitted: it ran separately as the timing
+# run. If it is missing, --resume picks it up anyway.
 RUNS = [
-    ("biosnap", "cluster", "full", 1, False),
-    ("biosnap", "cluster", "shuffled_coords", 1, False),
-    ("biosnap", "cluster", "full", 2, False),
-    ("biosnap", "cluster", "shuffled_coords", 2, False),
-    ("biosnap", "cluster", "full", 3, False),
-    ("biosnap", "cluster", "shuffled_coords", 3, False),
-    ("biosnap", "random", "full", 2, False),
-    ("biosnap", "random", "full", 3, False),
-    ("biosnap", "random", "shuffled_coords", 1, False),
-    ("biosnap", "random", "shuffled_coords", 2, False),
-    ("biosnap", "random", "shuffled_coords", 3, False),
+    ("biosnap", "cluster", "e3dti", "full", 1, False),
+    ("biosnap", "cluster", "drugban_matched", "full", 1, False),
+    ("biosnap", "cluster", "e3dti", "shuffled_coords", 1, False),
+    ("biosnap", "cluster", "e3dti", "full", 2, False),
+    ("biosnap", "cluster", "drugban_matched", "full", 2, False),
+    ("biosnap", "cluster", "e3dti", "shuffled_coords", 2, False),
+    ("biosnap", "cluster", "e3dti", "full", 3, False),
+    ("biosnap", "cluster", "drugban_matched", "full", 3, False),
+    ("biosnap", "cluster", "e3dti", "shuffled_coords", 3, False),
+    # Pairs with the completed timing run, giving the in-domain contrast.
+    ("biosnap", "random", "drugban_matched", "full", 1, False),
+    ("biosnap", "random", "e3dti", "full", 2, False),
+    ("biosnap", "random", "drugban_matched", "full", 2, False),
+    ("biosnap", "random", "e3dti", "full", 3, False),
+    ("biosnap", "random", "drugban_matched", "full", 3, False),
+    ("biosnap", "random", "e3dti", "shuffled_coords", 1, False),
+    ("biosnap", "random", "e3dti", "shuffled_coords", 2, False),
+    ("biosnap", "random", "e3dti", "shuffled_coords", 3, False),
 ]
 
 # Human is a separate, lower-priority block: it is not worth spending quota on
@@ -65,15 +83,18 @@ RUNS = [
 # them as three paired differences, not as two means with error bars, and say
 # plainly that the comparison is underpowered at this sample size.
 HUMAN_RUNS = [
-    ("human", "cold", "full", 1, True),
-    ("human", "cold", "full", 1, False),
-    ("human", "cold", "full", 2, True),
-    ("human", "cold", "full", 2, False),
-    ("human", "cold", "full", 3, True),
-    ("human", "cold", "full", 3, False),
-    ("human", "cold", "shuffled_coords", 1, True),
-    ("human", "cold", "shuffled_coords", 2, True),
-    ("human", "cold", "shuffled_coords", 3, True),
+    ("human", "cold", "e3dti", "full", 1, True),
+    ("human", "cold", "e3dti", "full", 1, False),
+    ("human", "cold", "drugban_matched", "full", 1, True),
+    ("human", "cold", "e3dti", "full", 2, True),
+    ("human", "cold", "e3dti", "full", 2, False),
+    ("human", "cold", "drugban_matched", "full", 2, True),
+    ("human", "cold", "e3dti", "full", 3, True),
+    ("human", "cold", "e3dti", "full", 3, False),
+    ("human", "cold", "drugban_matched", "full", 3, True),
+    ("human", "cold", "e3dti", "shuffled_coords", 1, True),
+    ("human", "cold", "e3dti", "shuffled_coords", 2, True),
+    ("human", "cold", "e3dti", "shuffled_coords", 3, True),
 ]
 
 
@@ -114,19 +135,23 @@ def parse_args():
     return parser.parse_args()
 
 
-def results_path(output_root: Path, dataset, split, ablation, seed, clean) -> Path:
+def results_path(output_root: Path, dataset, split, arch, ablation, seed, clean) -> Path:
+    # Mirrors train_e3dti.py: baselines occupy the ablation slot, because an
+    # ablation name means nothing for a model with no geometry.
+    leaf = ablation if arch == "e3dti" else arch
     return (
         output_root
         / f"{dataset}_{split}{'_cleaned' if clean else ''}"
-        / ablation
+        / leaf
         / f"seed_{seed}"
         / "results.json"
     )
 
 
-def describe(dataset, split, ablation, seed, clean) -> str:
+def describe(dataset, split, arch, ablation, seed, clean) -> str:
+    what = ablation if arch == "e3dti" else arch
     suffix = " [cleaned]" if clean else ""
-    return f"{dataset}/{split} {ablation} seed={seed}{suffix}"
+    return f"{dataset}/{split} {what} seed={seed}{suffix}"
 
 
 def main() -> int:
@@ -159,12 +184,13 @@ def main() -> int:
             break
 
         print(f"\n=== {describe(*run)}  (+{elapsed_hours:.1f}h)", flush=True)
-        dataset, split, ablation, seed, clean = run
+        dataset, split, arch, ablation, seed, clean = run
         command = [
             sys.executable,
             "train_e3dti.py",
             "--dataset", dataset,
             "--split", split,
+            "--arch", arch,
             "--ablation", ablation,
             "--seed", str(seed),
             "--epochs", str(args.epochs),
