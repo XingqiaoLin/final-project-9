@@ -210,6 +210,30 @@ python scripts/summarize_results.py
 
 The summary is written to `runs/summary.csv`.
 
+## Slides
+
+The deck follows the course format: MARP markdown with the `course` theme,
+matching `jkitchin/f26-06763`, where decks live at `lectures/lNN/slides.md` and
+the shared theme at `themes/course.css`. Ours is `slides/slides.md`, with the
+theme copied unmodified into `slides/themes/`.
+
+```bash
+cd slides
+npx @marp-team/marp-cli slides.md -o e3dti.html   # HTML, opens in a browser
+npx @marp-team/marp-cli slides.md --pdf -o e3dti.pdf
+npx @marp-team/marp-cli -s .                       # live preview while editing
+```
+
+Conventions used, same as the course decks: `<!-- _class: title -->` and
+`<!-- _class: section -->` for the full-bleed title and divider slides,
+`---` on its own line between slides, `#` for title and section headings and
+`##` for content headings, `<div class="definition">` for key concepts,
+`<span class="source">` for attributions, and plain HTML comments at the end of
+a slide for presenter notes, which MARP hides from the audience.
+
+The deck is written for the 7-minute slot in the syllabus, and carries a timing
+budget in the notes on the title slide.
+
 ## Output layout
 
 ```text
