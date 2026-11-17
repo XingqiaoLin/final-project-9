@@ -28,7 +28,7 @@ def main():
         repo_type="dataset",
         allow_patterns=[f"main/{args.dataset}/{args.split}/*"],
     )
-    frames = read_splits(root, args.dataset, args.split, args.seed)
+    frames = read_splits(root, args.dataset, args.split)
     report = audit_splits(frames)
     report.update(
         dataset=args.dataset,

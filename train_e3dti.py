@@ -112,7 +112,7 @@ def prepare_data(args):
             "main/protein_af3/protein_ca.npz",
         ],
     )
-    frames = read_splits(root, args.dataset, args.split, args.seed)
+    frames = read_splits(root, args.dataset, args.split)
     original_audit = audit_splits(frames)
     caps = {
         "train": args.max_train_pairs,

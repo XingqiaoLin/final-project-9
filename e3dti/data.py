@@ -124,14 +124,25 @@ def protein_graph(sequence, xyz, plddt, geometry_neighbors=True):
     }
 
 
-def read_splits(data_root, dataset, split, seed):
+# The cluster splits ship no validation file, so one is carved out of
+# source_train.csv.  That carve-out must NOT depend on the training seed:
+# docs/experiment_protocol.md requires train/validation/test membership to be
+# identical across seeds, so that seed spread measures model variance alone.
+# Keying it to the training seed gave seeds 1/2/3 near-disjoint validation sets
+# (only 0.9% of biosnap/cluster validation pairs were common to all three),
+# which silently mixed split-resampling variance into every reported standard
+# deviation on exactly the splits carrying the out-of-domain claim.
+VALIDATION_SPLIT_SEED = 0
+
+
+def read_splits(data_root, dataset, split):
     directory = Path(data_root) / "main" / dataset / split
     if split == "cluster":
         source = pd.read_csv(directory / "source_train.csv")
         train, validation = train_test_split(
             source,
             test_size=0.1,
-            random_state=seed,
+            random_state=VALIDATION_SPLIT_SEED,
             stratify=source["Y"],
         )
         frames = {
