@@ -110,6 +110,29 @@ the geometry**.
 
 ---
 
+## The drug branch could not see chirality
+
+Messages are built from **distances**. A reflection preserves every distance,
+so a molecule and its mirror image embed **identically** — not approximately,
+exactly.
+
+| Split | Drugs | With a stereocentre |
+|---|---|---|
+| BioSNAP random | 4,504 | **47.7%** |
+| BindingDB random | 14,643 | 45.1% |
+| Human cold | 1,802 | 43.6% |
+
+Enantiomers routinely differ in activity, so for nearly half the drugs the
+model was blind to what decides the answer. Fixed by adding the tetrahedral
+tag from the **molecular graph** — geometry cannot carry it.
+
+<span class="source">Asserted at <code>atol=0</code> in `tests/test_chirality.py`; 6,091 tagged atoms confirmed in the cached conformers.</span>
+
+<!-- 45 seconds. The point is the method: a limitation derived from the
+     architecture, measured for prevalence, fixed, then pinned by a test. -->
+
+---
+
 <!-- _class: section -->
 
 # What we found before we trained anything

@@ -33,7 +33,7 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 # part-way we are then left with complete, comparable pairs rather than three
 # `full` runs and nothing to compare them against.
 #
-# Entries are (dataset, split, arch, ablation, seed, clean).
+# Entries are (dataset, split, arch, ablation, seed, clean, chiral).
 #
 # The cluster block runs first and completes a full three-way comparison one
 # seed at a time: the 3D model, the capacity-matched 2D baseline, and the
@@ -47,24 +47,36 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 # biosnap/random seed 1 e3dti/full is omitted: it ran separately as the timing
 # run. If it is missing, --resume picks it up anyway.
 RUNS = [
-    ("biosnap", "cluster", "e3dti", "full", 1, False),
-    ("biosnap", "cluster", "drugban_matched", "full", 1, False),
-    ("biosnap", "cluster", "e3dti", "shuffled_coords", 1, False),
-    ("biosnap", "cluster", "e3dti", "full", 2, False),
-    ("biosnap", "cluster", "drugban_matched", "full", 2, False),
-    ("biosnap", "cluster", "e3dti", "shuffled_coords", 2, False),
-    ("biosnap", "cluster", "e3dti", "full", 3, False),
-    ("biosnap", "cluster", "drugban_matched", "full", 3, False),
-    ("biosnap", "cluster", "e3dti", "shuffled_coords", 3, False),
+    ("biosnap", "cluster", "e3dti", "full", 1, False, False),
+    ("biosnap", "cluster", "drugban_matched", "full", 1, False, False),
+    ("biosnap", "cluster", "e3dti", "shuffled_coords", 1, False, False),
+    ("biosnap", "cluster", "e3dti", "full", 2, False, False),
+    ("biosnap", "cluster", "drugban_matched", "full", 2, False, False),
+    ("biosnap", "cluster", "e3dti", "shuffled_coords", 2, False, False),
+    ("biosnap", "cluster", "e3dti", "full", 3, False, False),
+    ("biosnap", "cluster", "drugban_matched", "full", 3, False, False),
+    ("biosnap", "cluster", "e3dti", "shuffled_coords", 3, False, False),
     # Pairs with the completed timing run, giving the in-domain contrast.
-    ("biosnap", "random", "drugban_matched", "full", 1, False),
-    ("biosnap", "random", "e3dti", "full", 2, False),
-    ("biosnap", "random", "drugban_matched", "full", 2, False),
-    ("biosnap", "random", "e3dti", "full", 3, False),
-    ("biosnap", "random", "drugban_matched", "full", 3, False),
-    ("biosnap", "random", "e3dti", "shuffled_coords", 1, False),
-    ("biosnap", "random", "e3dti", "shuffled_coords", 2, False),
-    ("biosnap", "random", "e3dti", "shuffled_coords", 3, False),
+    ("biosnap", "random", "drugban_matched", "full", 1, False, False),
+    ("biosnap", "random", "e3dti", "full", 2, False, False),
+    ("biosnap", "random", "drugban_matched", "full", 2, False, False),
+    ("biosnap", "random", "e3dti", "full", 3, False, False),
+    ("biosnap", "random", "drugban_matched", "full", 3, False, False),
+    ("biosnap", "random", "e3dti", "shuffled_coords", 1, False, False),
+    ("biosnap", "random", "e3dti", "shuffled_coords", 2, False, False),
+    ("biosnap", "random", "e3dti", "shuffled_coords", 3, False, False),
+]
+
+# The chirality arm. ~45% of benchmark drugs carry a defined stereocentre and
+# the distance-only drug branch cannot distinguish any of them from their
+# mirror image; these pair seed-for-seed with the cluster `full` runs above, so
+# the comparison is like-for-like and the only difference is the eighth atom
+# feature. Last in the order because it is a secondary question: whether 3D
+# helps at all comes first.
+CHIRALITY_RUNS = [
+    ("biosnap", "cluster", "e3dti", "full", 1, False, True),
+    ("biosnap", "cluster", "e3dti", "full", 2, False, True),
+    ("biosnap", "cluster", "e3dti", "full", 3, False, True),
 ]
 
 # Human is a separate, lower-priority block: it is not worth spending quota on
@@ -83,18 +95,18 @@ RUNS = [
 # them as three paired differences, not as two means with error bars, and say
 # plainly that the comparison is underpowered at this sample size.
 HUMAN_RUNS = [
-    ("human", "cold", "e3dti", "full", 1, True),
-    ("human", "cold", "e3dti", "full", 1, False),
-    ("human", "cold", "drugban_matched", "full", 1, True),
-    ("human", "cold", "e3dti", "full", 2, True),
-    ("human", "cold", "e3dti", "full", 2, False),
-    ("human", "cold", "drugban_matched", "full", 2, True),
-    ("human", "cold", "e3dti", "full", 3, True),
-    ("human", "cold", "e3dti", "full", 3, False),
-    ("human", "cold", "drugban_matched", "full", 3, True),
-    ("human", "cold", "e3dti", "shuffled_coords", 1, True),
-    ("human", "cold", "e3dti", "shuffled_coords", 2, True),
-    ("human", "cold", "e3dti", "shuffled_coords", 3, True),
+    ("human", "cold", "e3dti", "full", 1, True, False),
+    ("human", "cold", "e3dti", "full", 1, False, False),
+    ("human", "cold", "drugban_matched", "full", 1, True, False),
+    ("human", "cold", "e3dti", "full", 2, True, False),
+    ("human", "cold", "e3dti", "full", 2, False, False),
+    ("human", "cold", "drugban_matched", "full", 2, True, False),
+    ("human", "cold", "e3dti", "full", 3, True, False),
+    ("human", "cold", "e3dti", "full", 3, False, False),
+    ("human", "cold", "drugban_matched", "full", 3, True, False),
+    ("human", "cold", "e3dti", "shuffled_coords", 1, True, False),
+    ("human", "cold", "e3dti", "shuffled_coords", 2, True, False),
+    ("human", "cold", "e3dti", "shuffled_coords", 3, True, False),
 ]
 
 
@@ -135,10 +147,12 @@ def parse_args():
     return parser.parse_args()
 
 
-def results_path(output_root: Path, dataset, split, arch, ablation, seed, clean) -> Path:
+def results_path(
+    output_root: Path, dataset, split, arch, ablation, seed, clean, chiral
+) -> Path:
     # Mirrors train_e3dti.py: baselines occupy the ablation slot, because an
     # ablation name means nothing for a model with no geometry.
-    leaf = ablation if arch == "e3dti" else arch
+    leaf = (ablation if arch == "e3dti" else arch) + ("_chiral" if chiral else "")
     return (
         output_root
         / f"{dataset}_{split}{'_cleaned' if clean else ''}"
@@ -148,8 +162,8 @@ def results_path(output_root: Path, dataset, split, arch, ablation, seed, clean)
     )
 
 
-def describe(dataset, split, arch, ablation, seed, clean) -> str:
-    what = ablation if arch == "e3dti" else arch
+def describe(dataset, split, arch, ablation, seed, clean, chiral) -> str:
+    what = (ablation if arch == "e3dti" else arch) + ("+chirality" if chiral else "")
     suffix = " [cleaned]" if clean else ""
     return f"{dataset}/{split} {what} seed={seed}{suffix}"
 
@@ -158,7 +172,7 @@ def main() -> int:
     args = parse_args()
     output_root = Path(args.output_root)
 
-    planned = RUNS + (HUMAN_RUNS if args.include_human else [])
+    planned = RUNS + CHIRALITY_RUNS + (HUMAN_RUNS if args.include_human else [])
     pending = [run for run in planned if not results_path(output_root, *run).exists()]
     done = len(planned) - len(pending)
     print(f"matrix: {len(planned)} runs, {done} already finished, {len(pending)} to go")
@@ -184,7 +198,7 @@ def main() -> int:
             break
 
         print(f"\n=== {describe(*run)}  (+{elapsed_hours:.1f}h)", flush=True)
-        dataset, split, arch, ablation, seed, clean = run
+        dataset, split, arch, ablation, seed, clean, chiral = run
         command = [
             sys.executable,
             "train_e3dti.py",
@@ -199,6 +213,8 @@ def main() -> int:
         ]
         if clean:
             command.append("--clean-splits")
+        if chiral:
+            command.append("--drug-chirality")
         result = subprocess.run(command, cwd=REPOSITORY)
 
         if result.returncode == 0:
