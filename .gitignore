@@ -1,0 +1,11 @@
+.venv/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+runs*/
+data/
+runs-resume-check/
+slides/e3dti.html
+slides/e3dti.pdf

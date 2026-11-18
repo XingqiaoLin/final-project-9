@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "e3dti-reproduction"
+version = "0.1.0"
+description = "Reproducible E3DTI experiments with padding-safe attention"
+requires-python = ">=3.11"
+dependencies = [
+  "huggingface-hub",
+  "numpy",
+  "pandas",
+  "rdkit",
+  "scikit-learn",
+  "torch",
+]
+
+[tool.setuptools.packages.find]
+include = ["e3dti*"]

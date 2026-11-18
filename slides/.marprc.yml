@@ -1,0 +1,6 @@
+# MARP CLI config, matching the course repo's convention so `theme: course`
+# resolves without a --theme-set flag.
+# Render to HTML:  npx @marp-team/marp-cli slides.md -o e3dti.html
+# Render to PDF:   npx @marp-team/marp-cli slides.md --pdf -o e3dti.pdf
+themeSet: ./themes
+html: true
