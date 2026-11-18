@@ -5,6 +5,46 @@ produced these numbers were wiped twice. This file is the durable copy.
 
 Date: 17 November 2026. Branch `yogesh/drug-egnn`, commit `1c603e7`.
 
+## Three seeds, with error bars
+
+Run on Colab, results written to Drive. BioSNAP **cluster** split, 10 epochs
+per arm, seeds 1/2/3. This supersedes the single-seed section below for every
+claim about whether a difference is real.
+
+| Arm | test AUROC | test AUPRC |
+|---|---|---|
+| DrugBAN matched (2D) | **0.6775 ± 0.0064** | 0.6985 ± 0.0014 |
+| E3DTI full (3D) | **0.7235 ± 0.0093** | 0.7339 ± 0.0125 |
+| E3DTI, coordinates shuffled | **0.7107 ± 0.0138** | 0.7218 ± 0.0172 |
+
+Mean ± sample standard deviation over three seeds. Per seed:
+
+```
+drugban_matched   0.6801  0.6822  0.6702
+full              0.7127  0.7290  0.7287
+shuffled_coords   0.7169  0.7204  0.6949
+```
+
+**The 3D-aware model beats the capacity-matched 2D baseline by +0.046 AUROC**,
+against seed spreads of 0.006 and 0.009. The gap is roughly five times the
+noise, so it is real.
+
+**Full versus shuffled is +0.0127, and that is inside the noise** — the two
+standard deviations are 0.009 and 0.014, and the arms swap places across
+seeds: shuffled wins seed 1, full wins seeds 2 and 3.
+
+The single-seed run had shuffled *ahead* of full by 0.018, which looked like
+evidence that the geometry was actively unhelpful. Three seeds show that was
+noise and the ordering is not stable. The supportable conclusion is neither
+"shuffling helps" nor "geometry helps":
+
+> No detectable difference between real and shuffled coordinates. The
+> 3D-aware architecture beats the 2D baseline out-of-domain; the predicted
+> coordinates cannot be shown to contribute.
+
+That is the same conclusion the single-seed run pointed at, now for a
+defensible reason rather than an accident of one random initialisation.
+
 ## The headline comparison
 
 BioSNAP **cluster** split — test rows use drugs **and** proteins that never
