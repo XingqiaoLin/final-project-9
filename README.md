@@ -333,3 +333,12 @@ runs/<dataset>_<split>/<ablation>/seed_<seed>/
 
 Only validation AUROC selects the checkpoint. Test labels are used once after
 model selection; the classification threshold is selected on validation data.
+
+## Team tasks
+
+| Person | Tasks |
+| --- | --- |
+| **Xingqiao** | Protein EGNN branch |
+| **Yogesh** | Drug EGNN branch |
+| **Jessie** | Both trivial baselines (CPU only); widened-DrugBAN code + parameter counting (instantiate the model on CPU to count — no training needed) |
+| **Anthony** | Leakage audit (MMseqs2, CPU); protein-clustered bootstrap + per-protein delta table once the CSVs land |
